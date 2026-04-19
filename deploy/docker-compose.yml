@@ -14,7 +14,7 @@ services:
     environment:
       - WEBHOOK_URL=https://fastapi-telegram.awounfouet.com/webhook
     env_file:
-      - .env
+      - ../.env
     volumes:
       - ./data:/app/data
     expose:
