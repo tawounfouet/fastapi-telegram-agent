@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 from sqlalchemy import String, DateTime, JSON, Text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -53,7 +54,8 @@ def get_session_factory(db_path: str) -> async_sessionmaker[AsyncSession]:
 
 
 async def init_db(db_path: str) -> None:
-    """Create all tables if they don't exist yet."""
+    """Create parent directory and all tables if they don't exist yet."""
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     engine = get_engine(db_path)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
