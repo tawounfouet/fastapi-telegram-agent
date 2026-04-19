@@ -2,8 +2,9 @@ import sys
 import uvicorn
 from config import settings
 
-# Persistance
-from persistence.repositories.in_memory import InMemoryMessageRepository, InMemoryContextRepository
+# Persistence — SQLite (production) backed by the same interfaces as InMemory
+from persistence.database import get_session_factory
+from persistence.repositories.sqlite import SQLiteMessageRepository, SQLiteContextRepository
 
 # Engines
 from engines.registry import registry
@@ -18,60 +19,55 @@ from adapters.telegram.controller import TelegramController
 from adapters.telegram.polling import TelegramPollingAdapter
 from adapters.telegram.webhook import TelegramWebhookAdapter
 
-def bootstrap():
+
+def bootstrap() -> TelegramController:
     """
-    Injection de dépendances manuelle et assemblage de l'architecture.
+    Injection de dépendances et assemblage de l'architecture.
+    La session factory SQLAlchemy est créée ici ; init_db() est appelé
+    depuis le lifespan FastAPI (mode webhook) ou juste avant run_polling().
     """
-    
-    # 1. Instancier la persistance
-    message_repo = InMemoryMessageRepository()
-    context_repo = InMemoryContextRepository()
-    
-    # 2. Instancier et enregistrer les engines
+    session_factory = get_session_factory(settings.DB_PATH)
+
+    message_repo = SQLiteMessageRepository(session_factory)
+    context_repo = SQLiteContextRepository(session_factory)
+
     simple_engine = SimpleEngine()
     llm_engine = LLMEngineMock()
-    
     registry.register("simple", simple_engine)
     registry.register("llm", llm_engine)
-    
-    # Choisir l'engine actif
+
     active_engine = registry.get_engine(settings.DEFAULT_ENGINE)
-    
-    # 3. Instancier le Use Case principal
+
     process_message_use_case = ProcessMessageUseCase(
         engine=active_engine,
         message_repo=message_repo,
-        context_repo=context_repo
+        context_repo=context_repo,
     )
-    
-    # 4. Instancier le controller Telegram
-    telegram_controller = TelegramController(process_message_use_case)
-    
-    return telegram_controller
 
-def run_polling(controller: TelegramController):
-    adapter = TelegramPollingAdapter(
-        token=settings.TELEGRAM_BOT_TOKEN,
-        controller=controller
-    )
+    return TelegramController(process_message_use_case)
+
+
+def run_polling(controller: TelegramController) -> None:
+    import asyncio
+    from persistence.database import init_db
+
+    asyncio.run(init_db(settings.DB_PATH))
+    adapter = TelegramPollingAdapter(token=settings.TELEGRAM_BOT_TOKEN, controller=controller)
     adapter.run()
 
-def run_webhook(controller: TelegramController):
-    adapter = TelegramWebhookAdapter(
-        token=settings.TELEGRAM_BOT_TOKEN,
-        controller=controller
-    )
+
+def run_webhook(controller: TelegramController) -> None:
+    # DB init happens inside the FastAPI lifespan (see webhook.py)
+    adapter = TelegramWebhookAdapter(token=settings.TELEGRAM_BOT_TOKEN, controller=controller)
     app = adapter.get_app()
-    # Démarrage de uvicorn (le port peut être configuré)
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
 if __name__ == "__main__":
     controller = bootstrap()
-    
-    mode = "polling"
-    if len(sys.argv) > 1:
-        mode = sys.argv[1]
-        
+
+    mode = sys.argv[1] if len(sys.argv) > 1 else "polling"
+
     if mode == "webhook":
         run_webhook(controller)
     else:
