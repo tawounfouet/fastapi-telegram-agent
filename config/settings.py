@@ -1,0 +1,22 @@
+import os
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    # Telegram
+    TELEGRAM_BOT_TOKEN: str = "DEFAULT_TOKEN_FOR_TESTING"
+    
+    # Webhook
+    WEBHOOK_URL: str = "https://example.com/webhook"
+    
+    # Engine configuration
+    DEFAULT_ENGINE: str = "simple"  # options: simple, llm, workflow
+    
+    # LLM (Mock or OpenAI)
+    OPENAI_API_KEY: str = ""
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+settings = Settings()

@@ -1,0 +1,34 @@
+name: telegram_agent
+
+networks:
+  shared_network:
+    external: true
+
+services:
+  telegram-agent:
+    image: ghcr.io/tawounfouet/fastapi-telegram-agent/telegram-agent:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: telegram_agent
+    environment:
+      - WEBHOOK_URL=https://fastapi-telegram.awounfouet.com/webhook
+    env_file:
+      - .env
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - shared_network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "telegram_agent"

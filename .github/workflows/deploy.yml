@@ -1,0 +1,117 @@
+name: Build & Deploy Telegram Agent
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/telegram-agent
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image_tag: ${{ github.sha }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          push: true
+          no-cache: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+
+      - name: Sync deploy files to server
+        run: |
+          rsync -avz \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='bot.log' \
+            --exclude='bot.pid' \
+            ./deploy/ \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/opt/apps/telegram/deploy/
+
+      - name: Pull image and redeploy
+        uses: appleboy/ssh-action@master
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          envs: GHCR_TOKEN,GHCR_USER,IMAGE_TAG
+          script: |
+            set -e
+
+            # Login to GHCR
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            cd /opt/apps/telegram
+
+            # Pull latest image
+            docker compose -f deploy/docker-compose.yml pull telegram-agent
+
+            # Recreate with new image
+            docker compose -f deploy/docker-compose.yml up -d --force-recreate telegram-agent
+
+            # Wait for healthy
+            echo "Waiting for telegram_agent to become healthy..."
+            for i in $(seq 1 18); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' telegram_agent 2>/dev/null || echo "starting")
+              echo "  Attempt $i/18 — $STATUS"
+              [ "$STATUS" = "healthy" ] && echo "✅ Deployment successful" && exit 0
+              sleep 10
+            done
+
+            echo "❌ Container did not become healthy"
+            docker logs telegram_agent --tail 30
+            exit 1
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ Deployed telegram-agent:${{ github.sha }} to ${{ secrets.SERVER_IP }}"
+          else
+            echo "❌ Deployment failed for commit ${{ github.sha }}"
+          fi
