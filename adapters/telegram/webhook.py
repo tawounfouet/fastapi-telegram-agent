@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from telegram import Update, Bot
@@ -38,9 +39,64 @@ class TelegramWebhookAdapter:
 
             return {"status": "ok"}
 
+        @self.app.get("/", include_in_schema=False)
+        async def homepage():
+            from fastapi.responses import HTMLResponse
+            version = os.getenv("APP_VERSION", "dev")
+            env = os.getenv("ENVIRONMENT", "unknown")
+            html = f"""<!DOCTYPE html>
+                            <html lang="fr">
+                            <head>
+                            <meta charset="UTF-8">
+                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                            <title>Telegram Bot API</title>
+                            <style>
+                                body {{ font-family: system-ui, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #222; }}
+                                h1 {{ font-size: 1.8rem; margin-bottom: 4px; }}
+                                .badge {{ display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 600; margin-left: 8px; vertical-align: middle; }}
+                                .badge-env {{ background: #e0f2fe; color: #0369a1; }}
+                                .badge-ver {{ background: #dcfce7; color: #15803d; }}
+                                p {{ color: #555; margin-top: 4px; }}
+                                .links {{ margin-top: 32px; display: flex; gap: 12px; flex-wrap: wrap; }}
+                                a.btn {{ display: inline-block; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.95rem; }}
+                                .btn-primary {{ background: #2563eb; color: #fff; }}
+                                .btn-secondary {{ background: #f1f5f9; color: #334155; }}
+                                .status {{ margin-top: 40px; padding: 14px 18px; background: #f0fdf4; border-left: 4px solid #22c55e; border-radius: 4px; font-size: 0.9rem; }}
+                            </style>
+                            </head>
+                            <body>
+                            <h1>Telegram Bot API
+                                <span class="badge badge-env">{env}</span>
+                                <span class="badge badge-ver">v{version}</span>
+                            </h1>
+                            <p>Agent conversationnel Telegram propulsé par FastAPI.</p>
+
+                            <div class="links">
+                                <a class="btn btn-primary" href="/docs">Documentation Swagger</a>
+                                <a class="btn btn-secondary" href="/redoc">ReDoc</a>
+                                <a class="btn btn-secondary" href="/ping">Ping</a>
+                                <a class="btn btn-secondary" href="/health">Health</a>
+                            </div>
+
+                            <div class="status">
+                                ✅ Service opérationnel &mdash; <strong>POST /webhook</strong> prêt à recevoir les mises à jour Telegram.
+                            </div>
+                            </body>
+                            </html>"""
+            return HTMLResponse(content=html)
+
         @self.app.get("/health")
         async def health_check():
             return {"status": "ok"}
+
+        @self.app.get("/ping")
+        async def ping():
+            return {
+                "status": "ok",
+                "message": "pong",
+                "version": os.getenv("APP_VERSION", "dev"),
+                "env": os.getenv("ENVIRONMENT", "unknown"),
+            }
 
     def get_app(self) -> FastAPI:
         return self.app
